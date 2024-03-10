@@ -141,7 +141,7 @@ class Assignment3VPN:
         while True:
             try:
                 # Receiving all the data
-                cipher_text = self.conn.recv(4096)
+                cipher_text = self.conn.recv(4096).strip()
 
                 # Check if socket is still open
                 if cipher_text == None or len(cipher_text) == 0:
@@ -170,7 +170,7 @@ class Assignment3VPN:
     def _SendMessage(self, message):
         plain_text = message
         cipher_text = self.prtcl.EncryptAndProtectMessage(plain_text)
-        self.conn.send(cipher_text.encode())
+        self.conn.send(cipher_text)
             
 
     # Secure connection with mutual authentication and key establishment

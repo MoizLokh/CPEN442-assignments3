@@ -1,3 +1,4 @@
+import random
 class Messages:
     def __init__(self, message):
         self.msg = message
@@ -138,6 +139,21 @@ class Protocol:
         # WAIT_FOR_SERVER: <E("SRVR",g^a mod p,R>,H(..),R
 
         return ""
+    
+class DiffieHellman:
+    def __init__(self, p, g):
+        self._p = p # large prime
+        self._g = g # primitive root of it (Will probably go for something small)
+
+    def generate_keys(self):
+        priv_key = random.randint(2, self._p-2)
+        pub_key = pow(self._g, priv_key, self._p)
+        return priv_key, pub_key   
+     
+    def generate_shared_secret(self, own_priv_key, other_pub_key):
+        return pow(other_pub_key, own_priv_key, self._p) # session key
+
+
 
 
 

@@ -7,10 +7,11 @@ class Protocol:
 def EncryptAndProtectMessage(plain_text):
     # See example from: https://pycryptodome.readthedocs.io/en/latest/src/cipher/aes.html
     print(f"Encryption says: {plain_text}")
+    print(f"UTF-8: {plain_text.encode('utf-8')}")
 
     # EAX mode requires nonce and also produces tag for integrity checking
     nonce = get_random_bytes(Protocol.KEY_LENGTH)
-    AES_cipher = AES.new(key=key, mode=AES.MODE_EAX, nonce=nonce, mac_len=Protocol.KEY_LENGTH)
+    AES_cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=nonce, mac_len=Protocol.KEY_LENGTH)
     ciphertext, mac_tag = AES_cipher.encrypt_and_digest(plain_text.encode())
 
     print(nonce)
@@ -34,7 +35,7 @@ def DecryptAndVerifyMessage(cipher_text):
     print(mac_tag)
 
     # Do verification and decryption
-    AES_cipher = AES_cipher = AES.new(key=key, mode=AES.MODE_EAX, nonce=nonce, mac_len=Protocol.KEY_LENGTH)
+    AES_cipher = AES_cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=nonce, mac_len=Protocol.KEY_LENGTH)
     message = None
     try:
         message = AES_cipher.decrypt_and_verify(encrypted_message, mac_tag)
@@ -46,9 +47,10 @@ def DecryptAndVerifyMessage(cipher_text):
 
 messgae = "No because this is some next level bullshit"
 encrypted = EncryptAndProtectMessage(messgae)
-print(type(encrypted))
-print(encrypted)
+# print(type(encrypted))
+# print(encrypted)
+print(f"HELLO {type(encrypted)}")
 decrypted = DecryptAndVerifyMessage(encrypted)
-print(type(decrypted))
-print(decrypted)
+# print(type(decrypted))
+# print(decrypted)
 

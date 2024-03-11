@@ -7,8 +7,7 @@ class Protocol:
     KEY_LENGTH=16
     def __init__(self):
         # Assume key is a fixed 128-bit (16 byte) size - can hash to ensure this
-        self._session_key = get_random_bytes(16)
-        pass
+        self._session_key = None
 
 
     # Creating the initial message of your protocol (to be send to the other party to bootstrap the protocol)
@@ -51,10 +50,6 @@ class Protocol:
         AES_cipher = AES.new(key=self._session_key, mode=AES.MODE_GCM, nonce=nonce, mac_len=Protocol.KEY_LENGTH)
         ciphertext, mac_tag = AES_cipher.encrypt_and_digest(plain_text.encode())
 
-        print(nonce)
-        print(ciphertext)
-        print(mac_tag)
-
         # Combine all messages into one
         cipher_text_combined = nonce+ciphertext+mac_tag
         print(f"Encryption says: {cipher_text_combined}")
@@ -69,17 +64,13 @@ class Protocol:
         nonce = cipher_text[:Protocol.KEY_LENGTH]
         encrypted_message = cipher_text[Protocol.KEY_LENGTH:-Protocol.KEY_LENGTH]
         mac_tag = cipher_text[-Protocol.KEY_LENGTH:]
-        print(nonce)
-        print(encrypted_message)
-        print(mac_tag)
 
         # Do verification and decryption
         AES_cipher = AES.new(key=self._session_key, mode=AES.MODE_GCM, nonce=nonce, mac_len=Protocol.KEY_LENGTH)
-        message = AES_cipher.decrypt(encrypted_message)
+
         try:
-            message = AES_cipher.decrypt_and_verify(encrypted_message, mac_tag, )
+            message = AES_cipher.decrypt_and_verify(encrypted_message, mac_tag)
             print("Message integrity verified, tag does match!")
+            return message
         except ValueError:
             print("Message integrity has been compromised, tag does not match!")
-            
-        return message

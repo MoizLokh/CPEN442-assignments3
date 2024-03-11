@@ -8,7 +8,7 @@ import tkinter.ttk as ttk
 from tkinter import messagebox
 
 # local import from "protocol.py"
-from protocol import Protocol
+from protocol import Protocol, ProtocolStates
 
 
 class Assignment3VPN:
@@ -168,9 +168,14 @@ class Assignment3VPN:
 
     # Send data to the other party
     def _SendMessage(self, message):
-        plain_text = message
-        cipher_text = self.prtcl.EncryptAndProtectMessage(plain_text)
-        self.conn.send(cipher_text.encode())
+        # Check if the session key has not been established
+        if self.prtcl.state < ProtocolStates.SESSION_KEY_ESTABLISHED:
+            # If key is not established, send the message as plain text
+            self.conn.send(message.encode())
+        else:
+            # If key is established, encrypt the message
+            cipher_text = self.prtcl.EncryptAndProtectMessage(message)
+            self.conn.send(cipher_text.encode())
             
 
     # Secure connection with mutual authentication and key establishment

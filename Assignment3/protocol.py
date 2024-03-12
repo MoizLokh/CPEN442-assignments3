@@ -1,7 +1,13 @@
-import os
+from Crypto.Cipher import AES
+from Crypto.Hash import SHAKE128
+from Crypto.Random import get_random_bytes
+
 import json
 
 class Protocol:
+    CHALLENGE_LENGTH=16
+    TAG_LENGTH=16
+    KEY_LENGTH=16
     Verbose = True
 
     INIT = "init"
@@ -49,7 +55,7 @@ class Protocol:
     def ProcessReceivedProtocolMessage(self, message):
         # <ID>,<Rc>          MSG_TYPE:INIT       (Init) -> Waiting for client message
         # <Es>,<Hs>,<Rs>     MSG_TYPE:AUTH       (Client: Waiting for server message) -> Established
-        # <Ec>,<Hc>,<Rc>     MSG_TYPE:AUTH       (Server: Waiting for client message) - > Established
+        # <Ec>,<Hc>,<Rc>     MSG_TYPE:AUTH       (Server: Waiting for client message) -> Established
 
         sendMsg = ""
 
@@ -100,24 +106,51 @@ class Protocol:
         return sendMsg
 
 
-    # Setting the key for the current session
+    # Established key for each session will have constant length size of 16. Relies on the secure
+    # hash function https://pycryptodome.readthedocs.io/en/latest/src/hash/shake128.html to ensure
+    # the length of the key is always 16
     def SetSessionKey(self, key):
-        self._key = key
-        pass
+        print(f"Setting session key based on Diffie Hellman")
+        hashFn = SHAKE128.new()
+        hashFn.update(key.encode())
+        self._key = hashFn.read(Protocol.KEY_LENGTH).hex()
 
-    # Encrypting messages
-    # TODO: IMPLEMENT ENCRYPTION WITH THE SESSION KEY (ALSO INCLUDE ANY NECESSARY INFO IN THE ENCRYPTED MESSAGE FOR INTEGRITY PROTECTION)
-    # RETURN AN ERROR MESSAGE IF INTEGRITY VERITIFCATION OR AUTHENTICATION FAILS
+    # Encryption function used for messages encrypted with the session key
     def EncryptAndProtectMessage(self, plain_text):
-        cipher_text = plain_text
-        return cipher_text
 
-    # Decrypting and verifying messages
-    # TODO: IMPLEMENT DECRYPTION AND INTEGRITY CHECK WITH THE SESSION KEY
-    # RETURN AN ERROR MESSAGE IF INTEGRITY VERITIFCATION OR AUTHENTICATION FAILS
+        # See example from: https://pycryptodome.readthedocs.io/en/latest/src/cipher/aes.html
+        print(f"Encryption says: {plain_text}")
+
+        # EAX mode requires nonce and also produces tag for integrity checking
+        nonce = get_random_bytes(Protocol.KEY_LENGTH)
+        AES_cipher = AES.new(key=self._key, mode=AES.MODE_GCM, nonce=nonce, mac_len=Protocol.TAG_LENGTH)
+        ciphertext, mac_tag = AES_cipher.encrypt_and_digest(plain_text.encode())
+
+        # Combine all messages into one
+        cipher_text_combined = nonce+ciphertext+mac_tag
+        print(f"Encryption says: {cipher_text_combined}")
+        return cipher_text_combined
+
+    # Decryption function used for messages encrypted with the session key
     def DecryptAndVerifyMessage(self, cipher_text):
-        plain_text = cipher_text
-        return plain_text
+        # See example from: https://pycryptodome.readthedocs.io/en/latest/src/cipher/aes.html
+
+        print(f"Decryption says: {cipher_text}")
+
+        # Extract nonce, message, and tag in that order
+        nonce = cipher_text[:Protocol.KEY_LENGTH]
+        encrypted_message = cipher_text[Protocol.KEY_LENGTH:-Protocol.TAG_LENGTH]
+        mac_tag = cipher_text[-Protocol.TAG_LENGTH:]
+
+        # Do verification and decryption
+        AES_cipher = AES.new(key=self._key, mode=AES.MODE_GCM, nonce=nonce, mac_len=Protocol.TAG_LENGTH)
+
+        try:
+            message = AES_cipher.decrypt_and_verify(encrypted_message, mac_tag)
+            print("Message integrity verified, tag does match!")
+            return message
+        except ValueError:
+            print("Message integrity has been compromised, tag does not match!")
 
     def _setStateTo(self, next_state):
         if self.Verbose:
@@ -150,7 +183,38 @@ class Protocol:
 
     # TODO: Return a random challenge for the current node instance
     def _createNewChallenge(self):
-        return ""
+        return get_random_bytes(Protocol.CHALLENGE_LENGTH)
+    
+    # Encrypts message for key exchange part of mutual authentication - this should use MASTER SECRET KEY
+    def encrypt(self, sender, dhKey, challenge, key):
+        data = json.dumps({"sender": sender, "dh": dhKey, "challenge": challenge})
 
+        nonce = get_random_bytes(Protocol.KEY_LENGTH)
+        AES_cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=nonce, mac_len=Protocol.TAG_LENGTH)
+        ciphertext, mac_tag = AES_cipher.encrypt_and_digest(data.encode())
 
+        return nonce+ciphertext+mac_tag
+    
+    # Decrypts message for key exchange part of mutual authentication - this should use MASTER SECRET KEY
+    def decrypt(self, encrypted_message, key):
+        
+        # Extract nonce, message, and tag in that order
+        nonce = encrypted_message[:Protocol.KEY_LENGTH]
+        encrypted_message = encrypted_message[Protocol.KEY_LENGTH:-Protocol.TAG_LENGTH]
+        mac_tag = encrypted_message[-Protocol.TAG_LENGTH:]
 
+        # Do verification and decryption
+        AES_cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=nonce, mac_len=Protocol.TAG_LENGTH)
+
+        try:
+            message = AES_cipher.decrypt_and_verify(encrypted_message, mac_tag)
+            print("Message integrity verified, tag does match!")
+
+            json_data = json.loads(message.decode())
+            if json_data["challenge"] == self.challenge:
+                return (json_data, True)
+            else:
+                return (None, False)
+        except ValueError:
+            print("Message integrity has been compromised, tag does not match!")
+            return (None, False)

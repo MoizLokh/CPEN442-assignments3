@@ -1,4 +1,7 @@
-class Messages:
+import os
+
+
+class Message:
     def __init__(self, message):
         self.msg = message
         self.challenge = ""
@@ -7,29 +10,31 @@ class Messages:
 
     def _parseMsg(self):
         pass
+            
 
-class InitMessage(Messages):
+class InitMessage(Message):
     def __init__(self, message):
+        self.message = message
         self.id = ""
-        Messages.__init__(self, message)
+        self.challenge_received = 0
+        Message.__init__(self, message)
 
     def _parseMsg(self):
-        # <ID>,<R>
-        words = self.msg.split(',')
-        self.id = words[0]
-        self.challenge = words[1]
+        self.id = self.message['type']
+        self.challenge_received = self.message['data']['challenge']
+        
 
-class AuthMessage(Messages):
+class AuthMessage(Message):
     SERVER = 0
     CLIENT = 1
 
     def __init__(self, message):
+        self.id = ""
         self.encryptMsg = ""
         self.DH = 0
-        self.hash = ""
-        self.msgType = self.SERVER
+        self.challenge_received = 0
 
-        Messages.__init__(self, message)
+        Message.__init__(self, message)
 
     def verifyMsg(self):
         # Decript and compare hash
@@ -37,10 +42,11 @@ class AuthMessage(Messages):
 
     def _parseMsg(self):
         # <E("SRVR/CLNT",g^a mod p,Ra>,H(..),Rb
-        words = self.msg.split(',')
-        self.encryptMsg = words[0]
-        self.DH = words[1]
-        self.challenge = words[2]
+        self.id = self.message['type']
+        self.encryptMsg = self.message['data']['encryptMsg']
+        self.DH = self.message['data']['DH']
+        if self.message['type'] == 'key_exchange_clnt':
+            self.challenge_received = self.message['data']['challenge']
 
 
 class Protocol:
@@ -59,8 +65,9 @@ class Protocol:
     # TODO: MODIFY ARGUMENTS AND LOGIC AS YOU SEEM FIT
     def __init__(self):
         self._key = None
-        self.state = self.INIT
-        pass
+        self.mutual_key = "password"
+        self.challenge = os.random(16)
+        self.df = None
 
 
     # Creating the initial message of your protocol (to be send to the other party to bootstrap the protocol)
@@ -68,8 +75,13 @@ class Protocol:
     def GetProtocolInitiationMessage(self):
         # "I'm Alice" + Ra
         # (Init) -> Waiting for server message
-        self._setStateTo(self.WAIT_FOR_SERVER)
-        return self._createSendMessage(self.INIT_MSG)
+        return  {
+                "type": "key_exchange_init",
+                "data": {
+                    "challenge": self.challenge,
+                        }
+                }
+        
 
 
     # Checking if a received message is part of your protocol (called from app.py)
@@ -87,34 +99,41 @@ class Protocol:
         # <Es>,<Hs>,<Rs>     MSG_TYPE:AUTH       (Client: Waiting for server message) -> Established
         # <Ec>,<Hc>,<Rc>     MSG_TYPE:AUTH       (Server: Waiting for client message) - > Established
 
-        sendMsg = ""
-        parsedMsg = self._getParsedMessage(message)
-
+        sendMsg = None
+ 
         if self.state == self.INIT:
-            if isinstance(parsedMsg, InitMessage):
+            if message['type'] == 'key_exchange_init':
                 # Send AuthMsg Srv
-                sendMsg = self._createSendMessage(self.AUTH_MSG_SRVR, parsedMsg)
-                self._setStateTo(self.WAIT_FOR_CLIENT)
+                self.df = DiffiHellman()
+                sendMsg = self._createSendMessage(message, self.AUTH_MSG_SRVR)
+                self.state = self.WAIT_FOR_CLIENT
             else:
-                print("Error")
+                print("Error") # error state failed logic
                 self._setStateTo(self.INIT)
 
         elif self.state == self.WAIT_FOR_CLIENT:
-            if isinstance(parsedMsg, AuthMessage) and parsedMsg.verifyMsg():
+            if message['type'] == 'key_exchange_clnt':
                 # Don't send msg
-                self._setStateTo(self.ESTABLISHED)
+                if self.verify(message):
+                    self.SetSessionKey(message)
+                    self.state = self.ESTABLISHED
+                else: 
+                    sendMsg = self._createSendMessage(message, self.ERROR)
             else:
                 print("Error")
                 self._setStateTo(self.INIT)
 
         elif self.state == self.WAIT_FOR_SERVER:
-            if isinstance(parsedMsg, AuthMessage) and parsedMsg.verifyMsg():
-                # Send AuthMsg client
-                sendMsg = self._createSendMessage(self.AUTH_MSG_CLNT, parsedMsg)
-                self._setStateTo(self.ESTABLISHED)
+            self.df = DiffiHellman()
+            if message['type'] == 'key_exchange_srv':
+                if self.verify(message):
+                    sendMsg = self._createSendMessage(self.AUTH_MSG_SRVR, message)
+                    self.SetSessionKey(message)
+                    self.state = self.ESTABLISHED
             else:
                 print("Error")
-                self._setStateTo(self.INIT)
+                sendMsg = self._createSendMessage(message, self.ERROR)
+                self.state = self.INIT
 
 
         return sendMsg
@@ -123,7 +142,7 @@ class Protocol:
     # Setting the key for the current session
     # TODO: MODIFY AS YOU SEEM FIT
     def SetSessionKey(self, key):
-        self._key = key
+        self. = key
         pass
 
 
@@ -142,16 +161,6 @@ class Protocol:
         plain_text = cipher_text
         return plain_text
 
-    def _setStateTo(self, next_state):
-        if self.Verbose:
-            print(self.state + " --> " + next_state)
-
-        self.state = next_state
-
-    def _getParsedMessage(self, message):
-        # Messages class parses the message and stores the data, TODO: Return the right type (InitMessage, AuthMessage) depending on message/state
-        return Messages(message)
-
     def _createSendMessage(self, MSG_TYPE, receivedMsg = ""):
         # Based on the state create sending protocol message
         # INIT: <ID>,<R>
@@ -159,14 +168,30 @@ class Protocol:
         # WAIT_FOR_SERVER: <E("SRVR",g^a mod p,R>,H(..),R
 
         if MSG_TYPE == self.INIT_MSG:
+            self.nonce = os.urandom(16)
             response = {
-                "type": "init",
+                "type": "key_exchange_init",
                 "data": {
-                    
+                    "challenge": self.nonce.hex(),
                 }
             }
+            
+        if MSG_TYPE == self.AUTH_MSG_SRVR:
+            response = {
+            "type": "key_exchange_clnt",
+            "encrypted": self.encrypt(self.df.A, receivedMsg['data']['challenge'], self.mutual_key),
+            "challenge": self.challenge
+        }
+            
+        if MSG_TYPE == self.AUTH_MSG_CLNT:
+            response = {
+            "type": "key_exchange_clnt",
+            "encrypted": self.encrypt(self.df.A, receivedMsg['data']['challenge'], self.mutual_key)
+        } 
+        
 
-        return ""
+
+        return response
 
 
 

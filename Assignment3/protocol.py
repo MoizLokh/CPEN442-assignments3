@@ -40,7 +40,7 @@ class Protocol:
     # Mode EAX as show in documentation: https://pycryptodome.readthedocs.io/en/latest/src/cipher/aes.html also 
     # provides integrity checking to ensure message is not garbled
 
-    # Encrypting messages
+    # This function is to be used specifically for encrypting messages after mutual authentication is done
     def EncryptAndProtectMessage(self, plain_text):
         # See example from: https://pycryptodome.readthedocs.io/en/latest/src/cipher/aes.html
         print(f"Encryption says: {plain_text}")
@@ -56,7 +56,7 @@ class Protocol:
         return cipher_text_combined
 
 
-    # Decrypting and verifying messages
+    # This function is to be used specifically for decrypting messages after mutual authentication is done
     def DecryptAndVerifyMessage(self, cipher_text):
         print(f"Decryption says: {cipher_text}")
 

@@ -1,7 +1,6 @@
 import os
 import json
 
-
 class Protocol:
     Verbose = True
 
@@ -10,9 +9,9 @@ class Protocol:
     WAIT_FOR_SERVER = "waitForServer"
     ESTABLISHED = "established"
 
-    AUTH_MSG_SRVR = 0
-    AUTH_MSG_CLNT = 1
-    INIT_MSG = 2
+    AUTH_MSG_SRVR = "key_exchange_srvr"
+    AUTH_MSG_CLNT = "key_exchange_clnt"
+    INIT_MSG = "key_exchange_init"
 
     # Initializer (Called from app.py)
     def __init__(self, mutual_key):
@@ -33,12 +32,11 @@ class Protocol:
 
 
     # Checking if a received message is part of your protocol (called from app.py)
-    # TODO: IMPLMENET THE LOGIC
     def IsMessagePartOfProtocol(self, message):
         # receiving message is always a protocol message if state is not established
         try:
             jsonMsg = json.loads(message)
-            isProto = any([jsonMsg["type"] == ("key_exchange_"+x) for x in ["init", "clnt", "srvr"]])
+            isProto = any([jsonMsg["type"] == x for x in [self.INIT_MSG, self.AUTH_MSG_CLNT, self.AUTH_MSG_SRVR]])
         except json.JSONDecodeError as e:
             print("Invalid JSON syntax:", e)
             isProto = False
@@ -76,7 +74,7 @@ class Protocol:
         elif self.state == self.WAIT_FOR_CLIENT:
             decriptJson, verified = self.decrypt(jsonMsg["encrypted"])
 
-            if jsonMsg["type"] == "key_exchange_clnt" and verified:
+            if jsonMsg["type"] == self.AUTH_MSG_CLNT and verified:
                 # Don't send msg
                 self.dh.compSK(decriptJson["dh"])
                 self.SetSessionKey(self.dh.SK)
@@ -88,7 +86,7 @@ class Protocol:
         elif self.state == self.WAIT_FOR_SERVER:
             decriptJson, verified = self.decrypt(jsonMsg["encrypted"])
 
-            if jsonMsg["type"] == "key_exchange_srvr" and verified:
+            if jsonMsg["type"] == self.AUTH_MSG_SRVR and verified:
                 # Send AuthMsg client
                 self.dh.compSK(decriptJson["dh"])
                 self.SetSessionKey(self.dh.SK)
@@ -131,20 +129,20 @@ class Protocol:
 
         if MSG_TYPE == self.INIT_MSG:
             response = {
-                "type": "key_exchange_init",
+                "type": MSG_TYPE,
                 "challenge": self.challenge
             }
             
         if MSG_TYPE == self.AUTH_MSG_SRVR:
             response = {
-                "type": "key_exchange_clnt",
+                "type": MSG_TYPE,
                 "encrypted": self.encrypt(self.df.A, receivedChallenge),
                 "challenge": self.challenge
             }
             
         if MSG_TYPE == self.AUTH_MSG_CLNT:
             response = {
-                "type": "key_exchange_clnt",
+                "type": MSG_TYPE,
                 "encrypted": self.encrypt(self.df.A, receivedChallenge)
             }
 

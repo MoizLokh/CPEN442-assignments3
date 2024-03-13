@@ -1,13 +1,20 @@
+import base64
+from hashlib import pbkdf2_hmac
+import os
 from Crypto.Cipher import AES
 from Crypto.Hash import SHAKE128
 from Crypto.Random import get_random_bytes
-
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.backends import default_backend
 import json
+
+from DHKeyExchange import DH
 
 class Protocol:
     CHALLENGE_LENGTH=16
     TAG_LENGTH=16
     KEY_LENGTH=16
+    SALT_LENGTH = 16
     Verbose = True
 
     INIT = "init"
@@ -24,14 +31,14 @@ class Protocol:
         self._key = None
         self.mutual_key = mutual_key
         self.challenge = ""
-        self.df = None
+        self.state = "init"
+        self.dh = None
 
     # Creating the initial message of your protocol (to be send to the other party to bootstrap the protocol)
     def GetProtocolInitiationMessage(self):
         # (Init) -> Waiting for server message
-
-        # TODO: Create a DH object
-        # self.dh = DH()
+        
+        self.dh = DH()
         self.challenge = self._createNewChallenge()
         self._setStateTo(self.WAIT_FOR_SERVER)
         return self._createSendMessage(self.INIT_MSG)
@@ -41,7 +48,7 @@ class Protocol:
     def IsMessagePartOfProtocol(self, message):
         # receiving message is always a protocol message if state is not established
         try:
-            jsonMsg = json.loads(message)
+            jsonMsg = json.loads(message.decode())
             isProto = any([jsonMsg["type"] == x for x in [self.INIT_MSG, self.AUTH_MSG_CLNT, self.AUTH_MSG_SRVR]])
         except json.JSONDecodeError as e:
             print("Invalid JSON syntax:", e)
@@ -60,7 +67,7 @@ class Protocol:
         sendMsg = ""
 
         try:
-            jsonMsg = json.loads(message)
+            jsonMsg = json.loads(message.decode())
         except json.JSONDecodeError as e:
             print("Invalid JSON syntax:", e)
             return sendMsg
@@ -68,8 +75,7 @@ class Protocol:
         if self.state == self.INIT:
             if jsonMsg["type"] == "key_exchange_init":
                 # Send AuthMsg Srv
-                # TODO: Create a DH object
-                #self.dh = DH()
+                self.dh = DH()
                 self.challenge = self._createNewChallenge()
                 sendMsg = self._createSendMessage(self.AUTH_MSG_SRVR, jsonMsg)
                 self._setStateTo(self.WAIT_FOR_CLIENT)
@@ -78,25 +84,23 @@ class Protocol:
                 self._setStateTo(self.INIT)
 
         elif self.state == self.WAIT_FOR_CLIENT:
-            decriptJson, verified = self.decrypt(jsonMsg["encrypted"])
+            decriptJson, verified = self.decrypt(jsonMsg["encrypted"], self.mutual_key)
 
             if jsonMsg["type"] == self.AUTH_MSG_CLNT and verified:
                 # Don't send msg
-                self.dh.compSK(decriptJson["dh"])
-                self.SetSessionKey(self.dh.SK)
+                self.SetSessionKey(self.dh.generate_shared_session_key(decriptJson["dh"]))
                 self._setStateTo(self.ESTABLISHED)
             else:
                 print("Error")
                 self._setStateTo(self.INIT)
 
         elif self.state == self.WAIT_FOR_SERVER:
-            decriptJson, verified = self.decrypt(jsonMsg["encrypted"])
+            decriptJson, verified = self.decrypt(jsonMsg["encrypted"], self.mutual_key) 
 
             if jsonMsg["type"] == self.AUTH_MSG_SRVR and verified:
                 # Send AuthMsg client
-                self.dh.compSK(decriptJson["dh"])
-                self.SetSessionKey(self.dh.SK)
-                sendMsg = self._createSendMessage(self.AUTH_MSG_CLNT, jsonMsg["challenge"])
+                self.SetSessionKey(self.dh.generate_shared_session_key(decriptJson["dh"]))
+                sendMsg = self._createSendMessage(self.AUTH_MSG_CLNT, jsonMsg)
                 self._setStateTo(self.ESTABLISHED)
             else:
                 print("Error")
@@ -112,7 +116,7 @@ class Protocol:
     def SetSessionKey(self, key):
         print(f"Setting session key based on Diffie Hellman")
         hashFn = SHAKE128.new()
-        hashFn.update(key.encode())
+        hashFn.update(str(key).encode())
         self._key = hashFn.read(Protocol.KEY_LENGTH).hex()
 
     # Encryption function used for messages encrypted with the session key
@@ -169,51 +173,83 @@ class Protocol:
         if MSG_TYPE == self.AUTH_MSG_SRVR:
             response = {
                 "type": MSG_TYPE,
-                "encrypted": self.encrypt(self.df.A, receivedChallenge),
+                "encrypted": self.encrypt("SVR", self.dh.own_public_key, receivedChallenge, self.mutual_key),
                 "challenge": self.challenge
             }
             
         if MSG_TYPE == self.AUTH_MSG_CLNT:
             response = {
                 "type": MSG_TYPE,
-                "encrypted": self.encrypt(self.df.A, receivedChallenge)
+                "encrypted": self.encrypt("CLNT", self.dh.own_public_key, receivedChallenge, self.mutual_key)
             }
 
-        return response
+        return json.dumps(response)
 
-    # TODO: Return a random challenge for the current node instance
+    # Return a random challenge for the current node instance
     def _createNewChallenge(self):
-        return get_random_bytes(Protocol.CHALLENGE_LENGTH)
+        return base64.b64encode(get_random_bytes(Protocol.CHALLENGE_LENGTH)).decode('ascii')
     
     # Encrypts message for key exchange part of mutual authentication - this should use MASTER SECRET KEY
-    def encrypt(self, sender, dhKey, challenge, key):
+    def encrypt(self, sender, dhKey, challenge, mutual_key):
+        print("encrypt" + mutual_key.get())
         data = json.dumps({"sender": sender, "dh": dhKey, "challenge": challenge})
-
+        
+        # Generate a salt for PBKDF2
+        salt = os.urandom(self.SALT_LENGTH)
+        
+        # Derive a key using PBKDF2 HMAC
+        # Note: mutual_key needs to be bytes. If it's a string, convert it using mutual_key.encode()
+        key = pbkdf2_hmac(
+            hash_name='sha256',  # Specifies the hash function to use
+            password=mutual_key.get().encode(),
+            salt=salt,
+            iterations=100000,
+            dklen=32  # Desired key length in bytes
+        )
+        
         nonce = get_random_bytes(Protocol.KEY_LENGTH)
         AES_cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=nonce, mac_len=Protocol.TAG_LENGTH)
         ciphertext, mac_tag = AES_cipher.encrypt_and_digest(data.encode())
 
-        return nonce+ciphertext+mac_tag
-    
-    # Decrypts message for key exchange part of mutual authentication - this should use MASTER SECRET KEY
-    def decrypt(self, encrypted_message, key):
-        
-        # Extract nonce, message, and tag in that order
-        nonce = encrypted_message[:Protocol.KEY_LENGTH]
-        encrypted_message = encrypted_message[Protocol.KEY_LENGTH:-Protocol.TAG_LENGTH]
-        mac_tag = encrypted_message[-Protocol.TAG_LENGTH:]
+        # You might want to return the salt too, depending on how you manage it
+        ret = base64.b64encode(salt + nonce + ciphertext + mac_tag).decode('utf-8')
+        print(ret)
+        return ret
 
+
+    # Decrypts message for key exchange part of mutual authentication - this should use MASTER SECRET KEY
+    def decrypt(self, encrypted_message_srt, mutual_key):
+        print("d" + mutual_key.get())
+        print(encrypted_message_srt)
+        #Convert Base64 encoded string back to bytes
+        encrypted_message = base64.b64decode(encrypted_message_srt)
+                      
+        # Extract the salt, nonce, and encrypted message + tag from the combined data
+        salt = encrypted_message[:self.SALT_LENGTH]
+        nonce = encrypted_message[self.SALT_LENGTH:self.SALT_LENGTH + self.KEY_LENGTH]
+        encrypted_data = encrypted_message[self.SALT_LENGTH + self.KEY_LENGTH:-self.TAG_LENGTH]
+        mac_tag = encrypted_message[-self.TAG_LENGTH:]
+
+        # Derive the key using PBKDF2 HMAC, identical to the encryption process
+        key = pbkdf2_hmac(
+            hash_name='sha256',
+            password=mutual_key.get().encode(),  # Assuming mutual_key is a StringVar and needs to be bytes
+            salt=salt,  # The same salt used during encryption
+            iterations=100000,
+            dklen=32
+        )
         # Do verification and decryption
         AES_cipher = AES.new(key=key, mode=AES.MODE_GCM, nonce=nonce, mac_len=Protocol.TAG_LENGTH)
 
         try:
-            message = AES_cipher.decrypt_and_verify(encrypted_message, mac_tag)
+            message = AES_cipher.decrypt_and_verify(encrypted_data, mac_tag)
             print("Message integrity verified, tag does match!")
 
             json_data = json.loads(message.decode())
-            if json_data["challenge"] == self.challenge:
+            if json_data["challenge"]['challenge'] == self.challenge:
                 return (json_data, True)
             else:
+                print("Failed to verify received challenge")
                 return (None, False)
         except ValueError:
             print("Message integrity has been compromised, tag does not match!")

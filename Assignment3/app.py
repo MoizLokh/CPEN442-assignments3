@@ -2,6 +2,7 @@
 import sys
 import socket
 from threading import Thread
+import traceback
 import pygubu
 import tkinter as tk
 import tkinter.ttk as ttk
@@ -141,7 +142,7 @@ class Assignment3VPN:
         while True:
             try:
                 # Receiving all the data
-                cipher_text = self.conn.recv(4096)
+                cipher_text = self.conn.recv(4096*2)
 
                 # Check if socket is still open
                 if cipher_text == None or len(cipher_text) == 0:
@@ -154,23 +155,34 @@ class Assignment3VPN:
                     # Disabling the button to prevent repeated clicks
                     self.secureButton["state"] = "disabled"
                     # Processing the protocol message
-                    self.prtcl.ProcessReceivedProtocolMessage(cipher_text)
+                    sendMsg = self.prtcl.ProcessReceivedProtocolMessage(cipher_text)
+                    self._SendMessage(sendMsg)
 
                 # Otherwise, decrypting and showing the messaage
                 else:
                     plain_text = self.prtcl.DecryptAndVerifyMessage(cipher_text)
                     self._AppendMessage("Other: {}".format(plain_text.decode()))
                     
-            except Exception as e:
-                self._AppendLog("RECEIVER_THREAD: Error receiving data: {}".format(str(e)))
-                return False
+            except Exception as e:    
+                # Format the traceback and error message
+                error_info = traceback.format_exc()
+                
+                # Append or log the detailed error information
+                self._AppendLog("RECEIVER_THREAD: Error receiving data: {}\n{}".format(str(e), error_info))
+                
 
 
     # Send data to the other party
     def _SendMessage(self, message):
-        plain_text = message
-        cipher_text = self.prtcl.EncryptAndProtectMessage(plain_text)
-        self.conn.send(cipher_text.encode())
+        # Check if the session key has been established
+        if self.prtcl.state == "established": 
+            # If key is established, encrypt the message
+            #cipher_text = self.prtcl.EncryptAndProtectMessage(message) TODO Figure out how to send the srv messsage since it goes to establiesed key maybe srv sends an agnoledgement and then clnt goes to established
+            m = message.encode()
+            self.conn.send(message.encode())
+        else:
+            # If key is not established, send the message as plain text
+            self.conn.send(message.encode())
             
 
     # Secure connection with mutual authentication and key establishment

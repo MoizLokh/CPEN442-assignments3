@@ -47,12 +47,14 @@ class Protocol:
     # Checking if a received message is part of your protocol (called from app.py)
     def IsMessagePartOfProtocol(self, message):
         # receiving message is always a protocol message if state is not established
-        try:
-            jsonMsg = json.loads(message.decode())
-            isProto = any([jsonMsg["type"] == x for x in [self.INIT_MSG, self.AUTH_MSG_CLNT, self.AUTH_MSG_SRVR]])
-        except json.JSONDecodeError as e:
-            print("Invalid JSON syntax:", e)
-            isProto = False
+        # try:
+        #     jsonMsg = json.loads(message)
+        #     isProto = any([jsonMsg["type"] == x for x in [self.INIT_MSG, self.AUTH_MSG_CLNT, self.AUTH_MSG_SRVR]])
+        # except json.JSONDecodeError as e:
+        #     print("Invalid JSON syntax:", e)
+        #     isProto = False
+
+        isProto = self.state is not self.ESTABLISHED
 
         return isProto
 
@@ -64,10 +66,10 @@ class Protocol:
         # <Es>,<Hs>,<Rs>     MSG_TYPE:AUTH       (Client: Waiting for server message) -> Established
         # <Ec>,<Hc>,<Rc>     MSG_TYPE:AUTH       (Server: Waiting for client message) -> Established
 
-        sendMsg = ""
+        sendMsg = None
 
         try:
-            jsonMsg = json.loads(message.decode())
+            jsonMsg = json.loads(message)
         except json.JSONDecodeError as e:
             print("Invalid JSON syntax:", e)
             return sendMsg
@@ -117,7 +119,7 @@ class Protocol:
         print(f"Setting session key based on Diffie Hellman")
         hashFn = SHAKE128.new()
         hashFn.update(str(key).encode())
-        self._key = hashFn.read(Protocol.KEY_LENGTH).hex()
+        self._key = hashFn.read(Protocol.KEY_LENGTH)
 
     # Encryption function used for messages encrypted with the session key
     def EncryptAndProtectMessage(self, plain_text):
@@ -127,7 +129,7 @@ class Protocol:
 
         # EAX mode requires nonce and also produces tag for integrity checking
         nonce = get_random_bytes(Protocol.KEY_LENGTH)
-        AES_cipher = AES.new(key=self._key, mode=AES.MODE_GCM, nonce=nonce, mac_len=Protocol.TAG_LENGTH)
+        AES_cipher = AES.new(key=self._key, nonce=nonce, mode=AES.MODE_GCM, mac_len=Protocol.TAG_LENGTH)
         ciphertext, mac_tag = AES_cipher.encrypt_and_digest(plain_text.encode())
 
         # Combine all messages into one
@@ -138,7 +140,7 @@ class Protocol:
     # Decryption function used for messages encrypted with the session key
     def DecryptAndVerifyMessage(self, cipher_text):
         # See example from: https://pycryptodome.readthedocs.io/en/latest/src/cipher/aes.html
-
+        message = ""
         print(f"Decryption says: {cipher_text}")
 
         # Extract nonce, message, and tag in that order
@@ -147,14 +149,15 @@ class Protocol:
         mac_tag = cipher_text[-Protocol.TAG_LENGTH:]
 
         # Do verification and decryption
-        AES_cipher = AES.new(key=self._key, mode=AES.MODE_GCM, nonce=nonce, mac_len=Protocol.TAG_LENGTH)
+        AES_cipher = AES.new(key=self._key, nonce=nonce, mode=AES.MODE_GCM, mac_len=Protocol.TAG_LENGTH)
 
         try:
-            message = AES_cipher.decrypt_and_verify(encrypted_message, mac_tag)
-            print("Message integrity verified, tag does match!")
-            return message
+            message = AES_cipher.decrypt_and_verify(encrypted_message, mac_tag).decode()
+            print("Message integrity: PASS")
         except ValueError:
-            print("Message integrity has been compromised, tag does not match!")
+            print("Message integrity: FAIL")
+
+        return message
 
     def _setStateTo(self, next_state):
         if self.Verbose:

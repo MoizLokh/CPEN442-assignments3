@@ -152,16 +152,18 @@ class Assignment3VPN:
                 # Checking if the received message is part of your protocol
                 # TODO: MODIFY THE INPUT ARGUMENTS AND LOGIC IF NECESSARY
                 if self.prtcl.IsMessagePartOfProtocol(cipher_text):
+                    cipher_text = cipher_text.decode()
                     # Disabling the button to prevent repeated clicks
                     self.secureButton["state"] = "disabled"
                     # Processing the protocol message
                     sendMsg = self.prtcl.ProcessReceivedProtocolMessage(cipher_text)
-                    self._SendMessage(sendMsg)
+                    if sendMsg is not None: self._SendProtoMessage(sendMsg)
 
                 # Otherwise, decrypting and showing the messaage
                 else:
+                    #plain_text = cipher_text
                     plain_text = self.prtcl.DecryptAndVerifyMessage(cipher_text)
-                    self._AppendMessage("Other: {}".format(plain_text.decode()))
+                    self._AppendMessage("Other: {}".format(plain_text))
                     
             except Exception as e:    
                 # Format the traceback and error message
@@ -170,19 +172,17 @@ class Assignment3VPN:
                 # Append or log the detailed error information
                 self._AppendLog("RECEIVER_THREAD: Error receiving data: {}\n{}".format(str(e), error_info))
                 
-
+    def _SendProtoMessage(self, message):
+        self.conn.send(message.encode())
 
     # Send data to the other party
     def _SendMessage(self, message):
         # Check if the session key has been established
-        if self.prtcl.state == "established": 
-            # If key is established, encrypt the message
-            #cipher_text = self.prtcl.EncryptAndProtectMessage(message) TODO Figure out how to send the srv messsage since it goes to establiesed key maybe srv sends an agnoledgement and then clnt goes to established
-            m = message.encode()
-            self.conn.send(message.encode())
-        else:
-            # If key is not established, send the message as plain text
-            self.conn.send(message.encode())
+        if self.prtcl.state == "established":
+            message = self.prtcl.EncryptAndProtectMessage(message)
+
+        if isinstance(message, bytes): self.conn.send(message)
+        else: self.conn.send(message.encode())
             
 
     # Secure connection with mutual authentication and key establishment

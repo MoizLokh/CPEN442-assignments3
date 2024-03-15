@@ -149,21 +149,23 @@ class Assignment3VPN:
                     self._AppendLog("RECEIVER_THREAD: Received empty message")
                     break
 
-                # Checking if the received message is part of your protocol
-                # TODO: MODIFY THE INPUT ARGUMENTS AND LOGIC IF NECESSARY
-                if self.prtcl.IsMessagePartOfProtocol(cipher_text):
+                try:
                     cipher_text = cipher_text.decode()
+                    isProtoMsg = self.prtcl.IsMessagePartOfProtocol(cipher_text)
+                except UnicodeDecodeError:
+                    isProtoMsg = False
+
+                if isProtoMsg:
                     # Disabling the button to prevent repeated clicks
                     self.secureButton["state"] = "disabled"
                     # Processing the protocol message
                     sendMsg = self.prtcl.ProcessReceivedProtocolMessage(cipher_text)
                     if sendMsg is not None: self._SendProtoMessage(sendMsg)
 
-                # Otherwise, decrypting and showing the messaage
+                    if self.prtcl.state == self.prtcl.ESTABLISHED: self._AppendLog("Secure Connection Established!");
                 else:
-                    #plain_text = cipher_text
-                    plain_text = self.prtcl.DecryptAndVerifyMessage(cipher_text)
-                    self._AppendMessage("Other: {}".format(plain_text))
+                    plain_text, secure = self.prtcl.DecryptAndVerifyMessage(cipher_text)
+                    self._AppendMessage("{}Other: {}".format("[Secure] " if secure else "",plain_text))
                     
             except Exception as e:    
                 # Format the traceback and error message
@@ -177,22 +179,25 @@ class Assignment3VPN:
 
     # Send data to the other party
     def _SendMessage(self, message):
-        # Check if the session key has been established
-        if self.prtcl.state == "established":
-            message = self.prtcl.EncryptAndProtectMessage(message)
+        secure = False
 
-        if isinstance(message, bytes): self.conn.send(message)
-        else: self.conn.send(message.encode())
-            
+        # Check if the session key has been established
+        message, secure = self.prtcl.EncryptAndProtectMessage(message)
+
+        if isinstance(message, bytes):
+            self.conn.send(message)
+        else:
+            self.conn.send(message.encode())
+
+        return secure
 
     # Secure connection with mutual authentication and key establishment
     def SecureConnection(self):
         # disable the button to prevent repeated clicks
         self.secureButton["state"] = "disabled"
 
-        # TODO: THIS IS WHERE YOU SHOULD IMPLEMENT THE START OF YOUR MUTUAL AUTHENTICATION AND KEY ESTABLISHMENT PROTOCOL, MODIFY AS YOU SEEM FIT
         init_message = self.prtcl.GetProtocolInitiationMessage()
-        self._SendMessage(init_message)
+        self._SendProtoMessage(init_message)
 
 
     # Called when SendMessage button is clicked
@@ -200,8 +205,8 @@ class Assignment3VPN:
         text = self.textMessage.get()
         if  text != "" and self.s is not None:
             try:
-                self._SendMessage(text)
-                self._AppendMessage("You: {}".format(text))
+                secure = self._SendMessage(text)
+                self._AppendMessage("{}You: {}".format("[Secure] " if secure else "",text))
                 self.textMessage.set("")
             except Exception as e:
                 self._AppendLog("SENDING_MESSAGE: Error sending data: {}".format(str(e)))

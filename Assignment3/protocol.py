@@ -47,14 +47,12 @@ class Protocol:
     # Checking if a received message is part of your protocol (called from app.py)
     def IsMessagePartOfProtocol(self, message):
         # receiving message is always a protocol message if state is not established
-        # try:
-        #     jsonMsg = json.loads(message)
-        #     isProto = any([jsonMsg["type"] == x for x in [self.INIT_MSG, self.AUTH_MSG_CLNT, self.AUTH_MSG_SRVR]])
-        # except json.JSONDecodeError as e:
-        #     print("Invalid JSON syntax:", e)
-        #     isProto = False
-
-        isProto = self.state is not self.ESTABLISHED
+        try:
+            jsonMsg = json.loads(message)
+            isProto = any([jsonMsg["type"] == x for x in [self.INIT_MSG, self.AUTH_MSG_CLNT, self.AUTH_MSG_SRVR]])
+        except json.JSONDecodeError as e:
+            print("Invalid JSON syntax:", e)
+            isProto = False
 
         return isProto
 
@@ -67,6 +65,7 @@ class Protocol:
         # <Ec>,<Hc>,<Rc>     MSG_TYPE:AUTH       (Server: Waiting for client message) -> Established
 
         sendMsg = None
+        print("ProcessReceivedProtocol")
 
         try:
             jsonMsg = json.loads(message)
@@ -121,8 +120,10 @@ class Protocol:
         hashFn.update(str(key).encode())
         self._key = hashFn.read(Protocol.KEY_LENGTH)
 
-    # Encryption function used for messages encrypted with the session key
+    # Encryption function used for messages encrypted with the session key, returns True if secure
     def EncryptAndProtectMessage(self, plain_text):
+
+        if self.state != self.ESTABLISHED: return plain_text, False
 
         # See example from: https://pycryptodome.readthedocs.io/en/latest/src/cipher/aes.html
         print(f"Encryption says: {plain_text}")
@@ -135,11 +136,13 @@ class Protocol:
         # Combine all messages into one
         cipher_text_combined = nonce+ciphertext+mac_tag
         print(f"Encryption says: {cipher_text_combined}")
-        return cipher_text_combined
+        return cipher_text_combined, True
 
-    # Decryption function used for messages encrypted with the session key
+    # Decryption function used for messages encrypted with the session key, returns True if secure
     def DecryptAndVerifyMessage(self, cipher_text):
         # See example from: https://pycryptodome.readthedocs.io/en/latest/src/cipher/aes.html
+        if self.state != self.ESTABLISHED: return cipher_text, False
+
         message = ""
         print(f"Decryption says: {cipher_text}")
 
@@ -155,9 +158,9 @@ class Protocol:
             message = AES_cipher.decrypt_and_verify(encrypted_message, mac_tag).decode()
             print("Message integrity: PASS")
         except ValueError:
-            print("Message integrity: FAIL")
+            raise Exception("Failed to decrypt secure message");
 
-        return message
+        return message, True
 
     def _setStateTo(self, next_state):
         if self.Verbose:
@@ -253,7 +256,7 @@ class Protocol:
                 return (json_data, True)
             else:
                 print("Failed to verify received challenge")
-                return (None, False)
+                raise Exception("Failed to decrypt: Invalid challenge");
         except ValueError:
             print("Message integrity has been compromised, tag does not match!")
-            return (None, False)
+            raise Exception("Failed to decrypt: Integrity compromised");

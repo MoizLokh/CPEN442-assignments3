@@ -2,6 +2,7 @@
 import sys
 import socket
 from threading import Thread
+import traceback
 import pygubu
 import tkinter as tk
 import tkinter.ttk as ttk
@@ -51,7 +52,7 @@ class Assignment3VPN:
         self.receive_thread = Thread(target=self._ReceiveMessages, daemon=True)
         
         # Creating a protocol object
-        self.prtcl = Protocol()
+        self.prtcl = Protocol(self.sharedSecret)
      
     # Distructor     
     def __del__(self):
@@ -141,46 +142,62 @@ class Assignment3VPN:
         while True:
             try:
                 # Receiving all the data
-                cipher_text = self.conn.recv(4096)
+                cipher_text = self.conn.recv(4096*2)
 
                 # Check if socket is still open
                 if cipher_text == None or len(cipher_text) == 0:
                     self._AppendLog("RECEIVER_THREAD: Received empty message")
                     break
 
-                # Checking if the received message is part of your protocol
-                # TODO: MODIFY THE INPUT ARGUMENTS AND LOGIC IF NECESSARY
-                if self.prtcl.IsMessagePartOfProtocol(cipher_text):
+                try:
+                    cipher_text = cipher_text.decode()
+                    isProtoMsg = self.prtcl.IsMessagePartOfProtocol(cipher_text)
+                except UnicodeDecodeError:
+                    isProtoMsg = False
+
+                if isProtoMsg:
                     # Disabling the button to prevent repeated clicks
                     self.secureButton["state"] = "disabled"
                     # Processing the protocol message
-                    self.prtcl.ProcessReceivedProtocolMessage(cipher_text)
+                    sendMsg = self.prtcl.ProcessReceivedProtocolMessage(cipher_text)
+                    if sendMsg is not None: self._SendProtoMessage(sendMsg)
 
-                # Otherwise, decrypting and showing the messaage
+                    if self.prtcl.state == self.prtcl.ESTABLISHED: self._AppendLog("Secure Connection Established!");
                 else:
-                    plain_text = self.prtcl.DecryptAndVerifyMessage(cipher_text)
-                    self._AppendMessage("Other: {}".format(plain_text.decode()))
+                    plain_text, secure = self.prtcl.DecryptAndVerifyMessage(cipher_text)
+                    self._AppendMessage("{}Other: {}".format("[Secure] " if secure else "",plain_text))
                     
-            except Exception as e:
-                self._AppendLog("RECEIVER_THREAD: Error receiving data: {}".format(str(e)))
-                return False
-
+            except Exception as e:    
+                # Format the traceback and error message
+                error_info = traceback.format_exc()
+                
+                # Append or log the detailed error information
+                self._AppendLog("RECEIVER_THREAD: Error receiving data: {}\n{}".format(str(e), error_info))
+                
+    def _SendProtoMessage(self, message):
+        self.conn.send(message.encode())
 
     # Send data to the other party
     def _SendMessage(self, message):
-        plain_text = message
-        cipher_text = self.prtcl.EncryptAndProtectMessage(plain_text)
-        self.conn.send(cipher_text.encode())
-            
+        secure = False
+
+        # Check if the session key has been established
+        message, secure = self.prtcl.EncryptAndProtectMessage(message)
+
+        if isinstance(message, bytes):
+            self.conn.send(message)
+        else:
+            self.conn.send(message.encode())
+
+        return secure
 
     # Secure connection with mutual authentication and key establishment
     def SecureConnection(self):
         # disable the button to prevent repeated clicks
         self.secureButton["state"] = "disabled"
 
-        # TODO: THIS IS WHERE YOU SHOULD IMPLEMENT THE START OF YOUR MUTUAL AUTHENTICATION AND KEY ESTABLISHMENT PROTOCOL, MODIFY AS YOU SEEM FIT
         init_message = self.prtcl.GetProtocolInitiationMessage()
-        self._SendMessage(init_message)
+        self._SendProtoMessage(init_message)
 
 
     # Called when SendMessage button is clicked
@@ -188,8 +205,8 @@ class Assignment3VPN:
         text = self.textMessage.get()
         if  text != "" and self.s is not None:
             try:
-                self._SendMessage(text)
-                self._AppendMessage("You: {}".format(text))
+                secure = self._SendMessage(text)
+                self._AppendMessage("{}You: {}".format("[Secure] " if secure else "",text))
                 self.textMessage.set("")
             except Exception as e:
                 self._AppendLog("SENDING_MESSAGE: Error sending data: {}".format(str(e)))
